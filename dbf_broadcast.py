@@ -2,40 +2,43 @@ import os
 import requests
 from datetime import datetime, timezone, timedelta
 
-# 環境変数から設定を読み込む
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-OANDA_API_KEY = os.environ.get("OANDA_API_KEY")
-OANDA_ACCOUNT_ID = os.environ.get("OANDA_ACCOUNT_ID")
+TWELVEDATA_API_KEY = os.environ.get("TWELVEDATA_API_KEY")
 
 JST = timezone(timedelta(hours=9))
 
 PAIRS = [
-    ("GBP_JPY", "GBPJPY"),
-    ("EUR_USD", "EURUSD"),
-    ("GBP_USD", "GBPUSD"),
-    ("USD_JPY", "USDJPY"),
-    ("XAU_USD", "XAUUSD"),
+    ("GBP/JPY", "GBPJPY"),
+    ("EUR/USD", "EURUSD"),
+    ("GBP/USD", "GBPUSD"),
+    ("USD/JPY", "USDJPY"),
+    ("XAU/USD", "XAUUSD"),
 ]
 
-def get_candles(instrument):
-    url = f"https://api-fxtrade.oanda.com/v3/instruments/{instrument}/candles"
-    headers = {"Authorization": f"Bearer {OANDA_API_KEY}"}
-    params = {"count": 3, "granularity": "D", "price": "M"}
-    r = requests.get(url, headers=headers, params=params)
-    return r.json().get("candles", [])
+def get_candles(symbol):
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": symbol,
+        "interval": "1day",
+        "outputsize": 3,
+        "apikey": TWELVEDATA_API_KEY,
+    }
+    r = requests.get(url, params=params)
+    data = r.json()
+    return data.get("values", [])
 
 def judge_bias(candles):
     if len(candles) < 3:
         return "判定不可", "データ不足"
-    prev2 = candles[-3]["mid"]
-    prev1 = candles[-2]["mid"]
-    p2_high = float(prev2["h"])
-    p2_low  = float(prev2["l"])
-    p1_open = float(prev1["o"])
-    p1_close= float(prev1["c"])
-    p1_high = float(prev1["h"])
-    p1_low  = float(prev1["l"])
+    prev2 = candles[2]
+    prev1 = candles[1]
+    p2_high = float(prev2["high"])
+    p2_low  = float(prev2["low"])
+    p1_open = float(prev1["open"])
+    p1_close= float(prev1["close"])
+    p1_high = float(prev1["high"])
+    p1_low  = float(prev1["low"])
 
     body_top    = max(p1_open, p1_close)
     body_bottom = min(p1_open, p1_close)
@@ -65,8 +68,8 @@ def main():
     date_str = now.strftime("%Y/%m/%d %H:%M JST")
     lines = [f"📊 *DBF デイリーバイアス*\n{date_str}\n"]
 
-    for oanda_id, label in PAIRS:
-        candles = get_candles(oanda_id)
+    for symbol, label in PAIRS:
+        candles = get_candles(symbol)
         bias, model = judge_bias(candles)
         lines.append(f"*{label}*\nバイアス: {bias}\nモデル: {model}\n")
 
