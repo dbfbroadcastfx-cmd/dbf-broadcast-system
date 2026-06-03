@@ -1,10 +1,15 @@
 import os
 import requests
+import tweepy
 from datetime import datetime, timezone, timedelta
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TWELVEDATA_API_KEY = os.environ.get("TWELVEDATA_API_KEY")
+X_CONSUMER_KEY = os.environ.get("X_CONSUMER_KEY")
+X_CONSUMER_SECRET = os.environ.get("X_CONSUMER_SECRET")
+X_ACCESS_TOKEN = os.environ.get("X_ACCESS_TOKEN")
+X_ACCESS_TOKEN_SECRET = os.environ.get("X_ACCESS_TOKEN_SECRET")
 
 JST = timezone(timedelta(hours=9))
 
@@ -42,40 +47,61 @@ def judge_bias(candles):
 
     body_top    = max(p1_open, p1_close)
     body_bottom = min(p1_open, p1_close)
+    swept_high  = p1_high > p2_high
+    swept_low   = p1_low  < p2_low
 
-    swept_high = p1_high > p2_high
-    swept_low  = p1_low  < p2_low
-    broke_high = body_top    > p2_high
-    broke_low  = body_bottom < p2_low
-
-    if swept_high and not broke_high:
-        return "🔴 ベアリッシュ", "スイープ反転（戻り売り）OB→CRT"
-    elif swept_low and not broke_low:
-        return "🟢 ブリッシュ", "スイープ反転（押し目買い）OB→CRT"
-    elif broke_high:
-        return "🟢 ブリッシュ", "ボディブレイク継続（買い継続）FVG→CRT"
-    elif broke_low:
-        return "🔴 ベアリッシュ", "ボディブレイク継続（売り継続）FVG→CRT"
+    if swept_high and p1_close < p2_high:
+        return "スイープリバーサル", "OB→CRT（ショート狙い）"
+    elif swept_low and p1_close > p2_low:
+        return "スイープリバーサル", "OB→CRT（ロング狙い）"
+    elif body_top > p2_high:
+        return "ボディブレイク継続", "FVG→CRT（ロング狙い）"
+    elif body_bottom < p2_low:
+        return "ボディブレイク継続", "FVG→CRT（ショート狙い）"
     else:
-        return "⚪ 中立", "収縮／様子見（レンジ）"
+        return "コンソリ", "セットアップ待ち"
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"})
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    requests.post(url, json=payload)
+
+def send_x(message):
+    try:
+        client = tweepy.Client(
+            consumer_key=X_CONSUMER_KEY,
+            consumer_secret=X_CONSUMER_SECRET,
+            access_token=X_ACCESS_TOKEN,
+            access_token_secret=X_ACCESS_TOKEN_SECRET
+        )
+        client.create_tweet(text=message)
+        print("X投稿成功")
+    except Exception as e:
+        print(f"X投稿失敗: {e}")
 
 def main():
     now = datetime.now(JST)
-    date_str = now.strftime("%Y/%m/%d %H:%M JST")
-    lines = [f"📊 *DBF デイリーバイアス*\n{date_str}\n"]
+    date_str = now.strftime("%Y/%m/%d")
+    lines = [f"📊 DBFバイアス速報 {date_str}\n"]
 
-    for symbol, label in PAIRS:
+    for name, symbol in PAIRS:
         candles = get_candles(symbol)
         bias, model = judge_bias(candles)
-        lines.append(f"*{label}*\nバイアス: {bias}\nモデル: {model}\n")
+        lines.append(f"*{name}*\nバイアス: {bias}\nモデル: {model}\n")
 
-    message = "\n".join(lines)
-    send_telegram(message)
-    print(message)
+    full_message = "\n".join(lines)
+    send_telegram(full_message)
+
+    # X用（140文字以内に要約）
+    x_lines = [f"📊DBFバイアス {date_str}"]
+    for name, symbol in PAIRS:
+        candles = get_candles(symbol)
+        bias, _ = judge_bias(candles)
+        emoji = "🔴" if "ショート" in bias else "🟢" if "ロング" in bias else "⚪"
+        x_lines.append(f"{emoji}{name}:{bias}")
+    x_lines.append("#FX #DBF #CRT")
+    x_message = "\n".join(x_lines)
+    send_x(x_message)
 
 if __name__ == "__main__":
     main()
